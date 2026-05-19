@@ -1,0 +1,23 @@
+{
+  "name": "OtaNhatAnh",
+  "version": "0.1.0",
+  "description": "Thư viện kết nối ESP32/ESP8266 vào hệ thống ota.nhatanh.tech (MQTT TLS + OTA pull HTTPS + WiFi captive portal).",
+  "keywords": "mqtt, ota, esp32, esp8266, iot, nhatanh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nhatanh-tech/ota-nhatanh-lib.git"
+  },
+  "authors": [{ "name": "Nhật Anh", "email": "admin@nhatanh.tech" }],
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": ["espressif32", "espressif8266"],
+  "dependencies": [
+    { "name": "PubSubClient", "version": "^2.8" },
+    { "name": "WiFiManager", "version": "^2.0.17" },
+    { "name": "ArduinoJson", "version": "^7.0.0" }
+  ],
+  "build": {
+    "libCompatMode": "strict",
+    "libLDFMode": "deep+"
+  }
+}
