@@ -14,7 +14,6 @@
 #endif
 
 #include <PubSubClient.h>
-#include <vector>
 
 // Macro live stream — user dùng OTA_PRINTLN("...") thay Serial.println("...")
 #define OTA_PRINT(x)    ota.rawPrint((const char*)(x))
@@ -22,25 +21,6 @@
 #define OTA_PRINTF(...) ota.rawPrintf(__VA_ARGS__)
 
 typedef std::function<void(String, String)> OtaMqttCallback;
-typedef std::function<void(bool)> OtaSwitchCallback;
-typedef std::function<void(float)> OtaNumberCallback;
-typedef std::function<void()> OtaButtonCallback;
-typedef std::function<void(String)> OtaTextCallback;
-
-struct OtaEntity {
-  String key;
-  String platform;     // sensor|binary_sensor|switch|number|button|text
-  String name;
-  String unit;
-  String iconOrClass;
-  float numMin = 0, numMax = 100, numStep = 1;
-  String lastState;
-  OtaSwitchCallback cbSwitch;
-  OtaNumberCallback cbNumber;
-  OtaButtonCallback cbButton;
-  OtaTextCallback   cbText;
-  bool configPublished = false;
-};
 
 class OtaNhatAnhConfig {
   friend class OtaNhatAnh;
@@ -90,21 +70,6 @@ public:
   void rawPrintln(const char *s);
   void rawPrintf(const char *fmt, ...);
 
-  // Entity API (MQTT discovery)
-  void addSensor(const String& key, const String& name = "", const String& unit = "", const String& deviceClass = "");
-  void addBinarySensor(const String& key, const String& name = "", const String& deviceClass = "");
-  void addSwitch(const String& key, const String& name, OtaSwitchCallback cb);
-  void addNumber(const String& key, const String& name, float minV, float maxV, float step, OtaNumberCallback cb);
-  void addButton(const String& key, const String& name, OtaButtonCallback cb);
-  void addText(const String& key, const String& name = "");
-
-  void updateSensor(const String& key, float value);
-  void updateSensor(const String& key, const String& value);
-  void updateBinarySensor(const String& key, bool on);
-  void updateSwitch(const String& key, bool on);
-  void updateNumber(const String& key, float value);
-  void updateText(const String& key, const String& value);
-
   bool isConnected() const;
   void checkOtaNow();
 
@@ -125,12 +90,6 @@ private:
   uint16_t _rawTokens = 100;
   char _rawBuf[256];
   int _rawIdx = 0;
-  std::vector<OtaEntity> _entities;
-  OtaEntity* _findEntity(const String& key);
-  void _publishEntityConfig(OtaEntity& e);
-  void _publishEntityState(OtaEntity& e, const String& value);
-  void _publishAllEntityConfigs();
-  void _handleEntitySet(const String& key, const String& payload);
 
   String _topic(const String& sub) const;
   void _setupWifi();
