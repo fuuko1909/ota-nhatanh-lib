@@ -52,9 +52,16 @@ void OtaNhatAnh::_onMqttRaw(char* topic, byte* payload, unsigned int len) {
   String p;
   p.reserve(len);
   for (unsigned int i = 0; i < len; i++) p += (char)payload[i];
-  // Handle lệnh hệ thống trước (lenh/*)
   if (t.indexOf("/lenh/") >= 0) {
     _instance->_handleCommand(t, p);
+  } else if (t.indexOf("/entity/") >= 0 && t.endsWith("/set")) {
+    // Tach key: thiet-bi/<id>/entity/<key>/set
+    int s1 = t.indexOf("/entity/") + 8;
+    int s2 = t.lastIndexOf("/set");
+    if (s2 > s1) {
+      String key = t.substring(s1, s2);
+      _instance->_handleEntitySet(key, p);
+    }
   }
   if (_instance->_onMsg) _instance->_onMsg(t, p);
 }
@@ -73,6 +80,8 @@ bool OtaNhatAnh::_connectMqtt() {
     Serial.println("[OTA] MQTT connected");
     _sendBirth();
     subscribe("lenh/#");
+    subscribe("entity/+/set");
+    _publishAllEntityConfigs();
     return true;
   }
   Serial.print("[OTA] MQTT fail rc=");
@@ -194,7 +203,6 @@ void OtaNhatAnh::logWarn(const char* fmt, ...)  { _OTA_LOG_IMPL('W') }
 void OtaNhatAnh::logError(const char* fmt, ...) { _OTA_LOG_IMPL('E') }
 
 void OtaNhatAnh::_handleCommand(const String& topic, const String& payload) {
-  // topic dạng thiet-bi/<id>/lenh/<ten>
   int p = topic.lastIndexOf('/');
   if (p < 0) return;
   String lenh = topic.substring(p + 1);
@@ -207,6 +215,102 @@ void OtaNhatAnh::_handleCommand(const String& topic, const String& payload) {
     ESP.restart();
   }
 }
+
+// ─────────── Entity API ───────────
+OtaEntity* OtaNhatAnh::_findEntity(const String& key) {
+  for (auto& e : _entities) if (e.key == key) return &e;
+  return nullptr;
+}
+
+void OtaNhatAnh::_publishEntityConfig(OtaEntity& e) {
+  if (!_mqtt.connected()) return;
+  String payload = "{\"platform\":\"" + e.platform + "\"";
+  if (e.name.length()) payload += ",\"name\":\"" + e.name + "\"";
+  if (e.unit.length()) payload += ",\"unit\":\"" + e.unit + "\"";
+  if (e.iconOrClass.length()) payload += ",\"device_class\":\"" + e.iconOrClass + "\"";
+  if (e.platform == "number") {
+    payload += ",\"min\":" + String(e.numMin, 3);
+    payload += ",\"max\":" + String(e.numMax, 3);
+    payload += ",\"step\":" + String(e.numStep, 3);
+  }
+  payload += "}";
+  String topic = _topic("entity/" + e.key + "/config");
+  _mqtt.publish(topic.c_str(), (const uint8_t*)payload.c_str(), payload.length(), true);
+  e.configPublished = true;
+}
+
+void OtaNhatAnh::_publishEntityState(OtaEntity& e, const String& value) {
+  e.lastState = value;
+  if (!_mqtt.connected()) return;
+  String topic = _topic("entity/" + e.key + "/state");
+  _mqtt.publish(topic.c_str(), (const uint8_t*)value.c_str(), value.length(), true);
+}
+
+void OtaNhatAnh::_publishAllEntityConfigs() {
+  for (auto& e : _entities) {
+    _publishEntityConfig(e);
+    if (e.lastState.length()) _publishEntityState(e, e.lastState);
+  }
+}
+
+void OtaNhatAnh::_handleEntitySet(const String& key, const String& payload) {
+  OtaEntity* e = _findEntity(key);
+  if (!e) return;
+  String v = payload;
+  v.trim();
+  if (e->platform == "switch" && e->cbSwitch) {
+    bool on = (v == "ON" || v == "on" || v == "true" || v == "1");
+    e->cbSwitch(on);
+    updateSwitch(key, on);
+  } else if (e->platform == "number" && e->cbNumber) {
+    float val = v.toFloat();
+    e->cbNumber(val);
+    updateNumber(key, val);
+  } else if (e->platform == "button" && e->cbButton) {
+    e->cbButton();
+  } else if (e->platform == "text" && e->cbText) {
+    e->cbText(v);
+    updateText(key, v);
+  }
+}
+
+void OtaNhatAnh::addSensor(const String& key, const String& name, const String& unit, const String& dc) {
+  OtaEntity e; e.key = key; e.platform = "sensor"; e.name = name; e.unit = unit; e.iconOrClass = dc;
+  _entities.push_back(e);
+}
+
+void OtaNhatAnh::addBinarySensor(const String& key, const String& name, const String& dc) {
+  OtaEntity e; e.key = key; e.platform = "binary_sensor"; e.name = name; e.iconOrClass = dc;
+  _entities.push_back(e);
+}
+
+void OtaNhatAnh::addSwitch(const String& key, const String& name, OtaSwitchCallback cb) {
+  OtaEntity e; e.key = key; e.platform = "switch"; e.name = name; e.cbSwitch = cb;
+  _entities.push_back(e);
+}
+
+void OtaNhatAnh::addNumber(const String& key, const String& name, float mn, float mx, float st, OtaNumberCallback cb) {
+  OtaEntity e; e.key = key; e.platform = "number"; e.name = name;
+  e.numMin = mn; e.numMax = mx; e.numStep = st; e.cbNumber = cb;
+  _entities.push_back(e);
+}
+
+void OtaNhatAnh::addButton(const String& key, const String& name, OtaButtonCallback cb) {
+  OtaEntity e; e.key = key; e.platform = "button"; e.name = name; e.cbButton = cb;
+  _entities.push_back(e);
+}
+
+void OtaNhatAnh::addText(const String& key, const String& name) {
+  OtaEntity e; e.key = key; e.platform = "text"; e.name = name;
+  _entities.push_back(e);
+}
+
+void OtaNhatAnh::updateSensor(const String& k, float v)         { OtaEntity* e=_findEntity(k); if(e) _publishEntityState(*e, String(v,3)); }
+void OtaNhatAnh::updateSensor(const String& k, const String& v) { OtaEntity* e=_findEntity(k); if(e) _publishEntityState(*e, v); }
+void OtaNhatAnh::updateBinarySensor(const String& k, bool on)   { OtaEntity* e=_findEntity(k); if(e) _publishEntityState(*e, on?"ON":"OFF"); }
+void OtaNhatAnh::updateSwitch(const String& k, bool on)         { OtaEntity* e=_findEntity(k); if(e) _publishEntityState(*e, on?"ON":"OFF"); }
+void OtaNhatAnh::updateNumber(const String& k, float v)         { OtaEntity* e=_findEntity(k); if(e) _publishEntityState(*e, String(v,3)); }
+void OtaNhatAnh::updateText(const String& k, const String& v)   { OtaEntity* e=_findEntity(k); if(e) _publishEntityState(*e, v); }
 
 void OtaNhatAnh::checkOtaNow() {
   _lastOtaCheck = millis();
