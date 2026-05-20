@@ -81,7 +81,7 @@ void OtaNhatAnh::_sendBirth() {
 }
 
 void OtaNhatAnh::_sendHeartbeat() {
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["version"] = "0.1.0";
   doc["ip"] = WiFi.localIP().toString();
   doc["rssi"] = WiFi.RSSI();
@@ -152,10 +152,10 @@ void OtaNhatAnh::checkOtaNow() {
   if (_cfg._insecure) client.setInsecure();
 
 #if defined(ESP32)
-  HTTPUpdate.setLedPin(LED_BUILTIN, LOW);
-  t_httpUpdate_return r = HTTPUpdate.update(client, _cfg._otaManifest);
+  httpUpdate.rebootOnUpdate(true);
+  t_httpUpdate_return r = httpUpdate.update(client, _cfg._otaManifest);
 #elif defined(ESP8266)
-  ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+  ESPhttpUpdate.rebootOnUpdate(true);
   HTTPUpdateResult r = ESPhttpUpdate.update(client, _cfg._otaManifest);
 #endif
   switch (r) {
