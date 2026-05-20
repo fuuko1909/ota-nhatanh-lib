@@ -55,6 +55,11 @@ public:
   bool publishSensor(const String& tenSensor, const String& giaTri);
   bool subscribe(const String& subTopic);
 
+  void logDebug(const char* fmt, ...);
+  void logInfo(const char* fmt, ...);
+  void logWarn(const char* fmt, ...);
+  void logError(const char* fmt, ...);
+
   bool isConnected() const;
   void checkOtaNow();
 
@@ -66,6 +71,10 @@ private:
   unsigned long _lastReconnect = 0;
   unsigned long _lastHeartbeat = 0;
   unsigned long _lastOtaCheck = 0;
+  unsigned long _logTokenLast = 0;
+  uint16_t _logTokens = 20;        // 20 msg/s burst
+  void _publishLog(char level, const char* msg);
+  void _handleCommand(const String& topic, const String& payload);
 
   String _topic(const String& sub) const;
   void _setupWifi();

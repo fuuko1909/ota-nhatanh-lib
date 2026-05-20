@@ -1,6 +1,7 @@
 #include "OtaNhatAnh.h"
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
+#include <stdarg.h>
 
 OtaNhatAnh* OtaNhatAnh::_instance = nullptr;
 
@@ -46,12 +47,16 @@ void OtaNhatAnh::_setupMqtt() {
 }
 
 void OtaNhatAnh::_onMqttRaw(char* topic, byte* payload, unsigned int len) {
-  if (!_instance || !_instance->_onMsg) return;
+  if (!_instance) return;
   String t(topic);
   String p;
   p.reserve(len);
   for (unsigned int i = 0; i < len; i++) p += (char)payload[i];
-  _instance->_onMsg(t, p);
+  // Handle lệnh hệ thống trước (lenh/*)
+  if (t.indexOf("/lenh/") >= 0) {
+    _instance->_handleCommand(t, p);
+  }
+  if (_instance->_onMsg) _instance->_onMsg(t, p);
 }
 
 bool OtaNhatAnh::_connectMqtt() {
@@ -140,6 +145,67 @@ bool OtaNhatAnh::publishSensor(const String& tenSensor, const String& giaTri) {
 
 bool OtaNhatAnh::subscribe(const String& sub) {
   return _mqtt.subscribe(_topic(sub).c_str());
+}
+
+// ─────────── Log API ───────────
+void OtaNhatAnh::_publishLog(char level, const char* msg) {
+  Serial.print("[");
+  Serial.print(level);
+  Serial.print("] ");
+  Serial.println(msg);
+  if (!_mqtt.connected()) return;
+
+  // Throttle: 20 tokens, refill 1/50ms
+  unsigned long now = millis();
+  unsigned long delta = now - _logTokenLast;
+  if (delta >= 50) {
+    uint16_t add = delta / 50;
+    if (_logTokens + add > 20) _logTokens = 20;
+    else _logTokens += add;
+    _logTokenLast = now;
+  }
+  if (_logTokens == 0) return;
+  _logTokens--;
+
+  // Payload JSON: {"l":"I","m":"..."}
+  String payload = "{\"l\":\"";
+  payload += level;
+  payload += "\",\"m\":\"";
+  for (const char* p = msg; *p; p++) {
+    char c = *p;
+    if (c == '"' || c == '\\') { payload += '\\'; payload += c; }
+    else if (c == '\n') payload += ' ';
+    else if (c >= 32) payload += c;
+  }
+  payload += "\"}";
+  _mqtt.publish(_topic("log").c_str(), payload.c_str());
+}
+
+#define _OTA_LOG_IMPL(LVL) \
+  char buf[256]; \
+  va_list ap; va_start(ap, fmt); \
+  vsnprintf(buf, sizeof(buf), fmt, ap); \
+  va_end(ap); \
+  _publishLog(LVL, buf);
+
+void OtaNhatAnh::logDebug(const char* fmt, ...) { _OTA_LOG_IMPL('D') }
+void OtaNhatAnh::logInfo(const char* fmt, ...)  { _OTA_LOG_IMPL('I') }
+void OtaNhatAnh::logWarn(const char* fmt, ...)  { _OTA_LOG_IMPL('W') }
+void OtaNhatAnh::logError(const char* fmt, ...) { _OTA_LOG_IMPL('E') }
+
+void OtaNhatAnh::_handleCommand(const String& topic, const String& payload) {
+  // topic dạng thiet-bi/<id>/lenh/<ten>
+  int p = topic.lastIndexOf('/');
+  if (p < 0) return;
+  String lenh = topic.substring(p + 1);
+  if (lenh == "ota") {
+    logInfo("Lenh OTA - check ngay");
+    checkOtaNow();
+  } else if (lenh == "reboot") {
+    logInfo("Lenh reboot");
+    delay(500);
+    ESP.restart();
+  }
 }
 
 void OtaNhatAnh::checkOtaNow() {
