@@ -202,6 +202,60 @@ void OtaNhatAnh::logInfo(const char* fmt, ...)  { _OTA_LOG_IMPL('I') }
 void OtaNhatAnh::logWarn(const char* fmt, ...)  { _OTA_LOG_IMPL('W') }
 void OtaNhatAnh::logError(const char* fmt, ...) { _OTA_LOG_IMPL('E') }
 
+// ─────────── Live Serial stream ───────────
+void OtaNhatAnh::_publishRawLine(const char* msg) {
+  if (!_mqtt.connected()) return;
+  // Throttle 100 tokens, refill 1/10ms (100/s)
+  unsigned long now = millis();
+  unsigned long delta = now - _rawTokenLast;
+  if (delta >= 10) {
+    uint16_t add = delta / 10;
+    if (_rawTokens + add > 100) _rawTokens = 100;
+    else _rawTokens += add;
+    _rawTokenLast = now;
+  }
+  if (_rawTokens == 0) return;
+  _rawTokens--;
+  String topic = _topic("log/raw");
+  _mqtt.publish(topic.c_str(), (const uint8_t*)msg, strlen(msg));
+}
+
+void OtaNhatAnh::rawPrint(const char *s) {
+  Serial.print(s);
+  // Gom vao buffer cho den \n hoac day buffer
+  for (; *s; s++) {
+    if (*s == '\n' || _rawIdx >= 255) {
+      _rawBuf[_rawIdx] = 0;
+      if (_rawIdx > 0) _publishRawLine(_rawBuf);
+      _rawIdx = 0;
+      continue;
+    }
+    if (*s == '\r') continue;
+    _rawBuf[_rawIdx++] = *s;
+  }
+}
+
+void OtaNhatAnh::rawPrintln(const char *s) {
+  Serial.println(s);
+  // Flush ngay
+  int n = 0;
+  while (s[n] && _rawIdx < 255) {
+    if (s[n] != '\r' && s[n] != '\n') _rawBuf[_rawIdx++] = s[n];
+    n++;
+  }
+  _rawBuf[_rawIdx] = 0;
+  if (_rawIdx > 0) _publishRawLine(_rawBuf);
+  _rawIdx = 0;
+}
+
+void OtaNhatAnh::rawPrintf(const char *fmt, ...) {
+  char buf[256];
+  va_list ap; va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  rawPrint(buf);
+}
+
 void OtaNhatAnh::_handleCommand(const String& topic, const String& payload) {
   int p = topic.lastIndexOf('/');
   if (p < 0) return;

@@ -16,6 +16,11 @@
 #include <PubSubClient.h>
 #include <vector>
 
+// Macro live stream — user dùng OTA_PRINTLN("...") thay Serial.println("...")
+#define OTA_PRINT(x)    ota.rawPrint((const char*)(x))
+#define OTA_PRINTLN(x)  ota.rawPrintln((const char*)(x))
+#define OTA_PRINTF(...) ota.rawPrintf(__VA_ARGS__)
+
 typedef std::function<void(String, String)> OtaMqttCallback;
 typedef std::function<void(bool)> OtaSwitchCallback;
 typedef std::function<void(float)> OtaNumberCallback;
@@ -80,6 +85,11 @@ public:
   void logWarn(const char* fmt, ...);
   void logError(const char* fmt, ...);
 
+  // Live stream Serial qua MQTT topic log/raw
+  void rawPrint(const char *s);
+  void rawPrintln(const char *s);
+  void rawPrintf(const char *fmt, ...);
+
   // Entity API (MQTT discovery)
   void addSensor(const String& key, const String& name = "", const String& unit = "", const String& deviceClass = "");
   void addBinarySensor(const String& key, const String& name = "", const String& deviceClass = "");
@@ -109,7 +119,12 @@ private:
   unsigned long _logTokenLast = 0;
   uint16_t _logTokens = 20;        // 20 msg/s burst
   void _publishLog(char level, const char* msg);
+  void _publishRawLine(const char* msg);
   void _handleCommand(const String& topic, const String& payload);
+  unsigned long _rawTokenLast = 0;
+  uint16_t _rawTokens = 100;
+  char _rawBuf[256];
+  int _rawIdx = 0;
   std::vector<OtaEntity> _entities;
   OtaEntity* _findEntity(const String& key);
   void _publishEntityConfig(OtaEntity& e);
