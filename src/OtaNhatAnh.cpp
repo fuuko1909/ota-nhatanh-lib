@@ -642,15 +642,32 @@ void OtaNhatAnh::checkOtaNow() {
 #if defined(ESP32)
   httpUpdate.rebootOnUpdate(true);
   t_httpUpdate_return r = httpUpdate.update(client, _cfg._otaManifest);
+  String errStr = httpUpdate.getLastErrorString();
+  int errCode = httpUpdate.getLastError();
 #elif defined(ESP8266)
   ESPhttpUpdate.rebootOnUpdate(true);
   HTTPUpdateResult r = ESPhttpUpdate.update(client, _cfg._otaManifest);
+  String errStr = ESPhttpUpdate.getLastErrorString();
+  int errCode = ESPhttpUpdate.getLastError();
 #endif
   switch (r) {
-    case HTTP_UPDATE_FAILED:
-      Serial.println("[OTA] FAILED");
-      publish("ota/ket-qua", "{\"ket_qua\":\"that_bai\"}");
+    case HTTP_UPDATE_FAILED: {
+      Serial.print("[OTA] FAILED code=");
+      Serial.print(errCode);
+      Serial.print(" msg=");
+      Serial.println(errStr);
+      String payload = "{\"ket_qua\":\"that_bai\",\"thong_diep\":\"code=";
+      payload += errCode;
+      payload += " ";
+      for (size_t i = 0; i < errStr.length() && i < 200; i++) {
+        char c = errStr[i];
+        if (c == '"' || c == '\\') payload += '\\';
+        if (c >= 32) payload += c;
+      }
+      payload += "\"}";
+      publish("ota/ket-qua", payload);
       break;
+    }
     case HTTP_UPDATE_NO_UPDATES:
       Serial.println("[OTA] no update");
       break;
