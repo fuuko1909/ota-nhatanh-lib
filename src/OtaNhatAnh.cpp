@@ -640,12 +640,12 @@ void OtaNhatAnh::checkOtaNow() {
   if (_cfg._insecure) client.setInsecure();
 
 #if defined(ESP32)
-  httpUpdate.rebootOnUpdate(true);
+  httpUpdate.rebootOnUpdate(false);   // KHONG tu reboot — phai publish thanh_cong truoc
   t_httpUpdate_return r = httpUpdate.update(client, _cfg._otaManifest);
   String errStr = httpUpdate.getLastErrorString();
   int errCode = httpUpdate.getLastError();
 #elif defined(ESP8266)
-  ESPhttpUpdate.rebootOnUpdate(true);
+  ESPhttpUpdate.rebootOnUpdate(false);
   HTTPUpdateResult r = ESPhttpUpdate.update(client, _cfg._otaManifest);
   String errStr = ESPhttpUpdate.getLastErrorString();
   int errCode = ESPhttpUpdate.getLastError();
@@ -672,8 +672,14 @@ void OtaNhatAnh::checkOtaNow() {
       Serial.println("[OTA] no update");
       break;
     case HTTP_UPDATE_OK:
-      Serial.println("[OTA] OK — restarting");
-      // ESP đã reboot — không tới đây
+      Serial.println("[OTA] OK — pub thanh_cong roi restart");
+      // Pub thanh_cong + chờ flush MQTT trước khi reboot
+      publish("ota/ket-qua", "{\"ket_qua\":\"thanh_cong\"}");
+      _mqtt.loop();
+      delay(800);   // đợi broker ack
+      _mqtt.disconnect();
+      delay(200);
+      ESP.restart();
       break;
   }
   _setState(OtaState::ONLINE);
