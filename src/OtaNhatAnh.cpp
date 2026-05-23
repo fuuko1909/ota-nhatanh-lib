@@ -191,7 +191,21 @@ void OtaNhatAnh::_apTick() {
   }
 }
 
-String OtaNhatAnh::_apFormHtml(const String& thongBao) const {
+String OtaNhatAnh::_htmlEscape(const String& s) {
+  String o; o.reserve(s.length() + 8);
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '<') o += F("&lt;");
+    else if (c == '>') o += F("&gt;");
+    else if (c == '"') o += F("&quot;");
+    else if (c == '\'') o += F("&#39;");
+    else if (c == '&') o += F("&amp;");
+    else o += c;
+  }
+  return o;
+}
+
+String OtaNhatAnh::_apFormHtml(const String& thongBao, const String& prefillSsid) const {
   String h;
   h.reserve(2048);
   h += F("<!DOCTYPE html><html><head><meta charset='utf-8'>");
@@ -210,28 +224,33 @@ String OtaNhatAnh::_apFormHtml(const String& thongBao) const {
   h += F("</style></head><body>");
   h += F("<h1>OTA NhatAnh</h1>");
   h += F("<p class='sub'>Cau hinh WiFi cho thiet bi <b>");
-  h += _cfg._deviceId;
+  h += _htmlEscape(_cfg._deviceId);
   h += F("</b></p>");
   if (thongBao.length() > 0) {
     h += F("<div class='msg'>");
-    h += thongBao;
+    h += _htmlEscape(thongBao);
     h += F("</div>");
   }
   h += F("<form method='POST' action='/save'>");
   h += F("<label>SSID</label>");
-  h += F("<input name='ssid' required maxlength='32' autofocus>");
+  h += F("<input name='ssid' required maxlength='32' autofocus value='");
+  h += _htmlEscape(prefillSsid);
+  h += F("'>");
   h += F("<label>Mat khau</label>");
-  h += F("<input name='pass' type='password' maxlength='64'>");
+  h += F("<input name='pass' type='password' maxlength='64'");
+  if (prefillSsid.length() > 0) h += F(" autofocus");
+  h += F(">");
   h += F("<button type='submit'>Luu &amp; Ket noi</button>");
   h += F("</form>");
   h += F("<button class='scan' onclick=\"location='/scan'\">Quet lai mang xung quanh</button>");
-  h += F("<p class='dev'>OtaNhatAnh lib v0.7.2</p>");
+  h += F("<p class='dev'>OtaNhatAnh lib v0.7.4</p>");
   h += F("</body></html>");
   return h;
 }
 
 void OtaNhatAnh::_apHandleRoot() {
-  _apWeb->send(200, "text/html", _apFormHtml());
+  String prefill = _apWeb->hasArg("ssid") ? _apWeb->arg("ssid") : String("");
+  _apWeb->send(200, "text/html", _apFormHtml("", prefill));
 }
 
 void OtaNhatAnh::_apHandleScan() {
@@ -240,21 +259,40 @@ void OtaNhatAnh::_apHandleScan() {
   html.reserve(2048);
   html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scan</title>");
   html += F("<style>body{font-family:sans-serif;background:#0a1020;color:#e6edf7;padding:20px;max-width:480px;margin:auto}");
+  html += F("h2{color:#2dd4bf}");
   html += F("a{display:block;padding:10px;background:#0f1730;color:#2dd4bf;text-decoration:none;border-radius:6px;margin:6px 0}");
   html += F("a:hover{background:#1f2a4a}small{color:#94a3b8}</style></head><body>");
   html += F("<h2>Tim thay ");
   html += n;
   html += F(" mang</h2>");
   for (int i = 0; i < n; i++) {
+    String s = WiFi.SSID(i);
+    // URL-encode SSID: space → %20, & → %26, # → %23, + → %2B
+    String enc;
+    for (size_t k = 0; k < s.length(); k++) {
+      char c = s[k];
+      if (c == ' ') enc += F("%20");
+      else if (c == '&') enc += F("%26");
+      else if (c == '#') enc += F("%23");
+      else if (c == '+') enc += F("%2B");
+      else if (c == '?') enc += F("%3F");
+      else if (c == '=') enc += F("%3D");
+      else if (c == '/') enc += F("%2F");
+      else if (c == '"' || c == '\'' || c == '<' || c == '>') {
+        char hex[4]; snprintf(hex, sizeof(hex), "%%%02X", (uint8_t)c);
+        enc += hex;
+      }
+      else enc += c;
+    }
     html += F("<a href='/?ssid=");
-    html += WiFi.SSID(i);
+    html += enc;
     html += F("'>");
-    html += WiFi.SSID(i);
+    html += _htmlEscape(s);
     html += F(" <small>(");
     html += WiFi.RSSI(i);
     html += F(" dBm)</small></a>");
   }
-  html += F("<p><a href='/'>← Quay lai</a></p></body></html>");
+  html += F("<p><a href='/'>← Quay lai (nhap thu cong)</a></p></body></html>");
   _apWeb->send(200, "text/html", html);
 }
 

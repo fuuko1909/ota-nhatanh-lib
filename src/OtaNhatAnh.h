@@ -178,7 +178,8 @@ private:
   void _apHandleRoot();
   void _apHandleSave();
   void _apHandleScan();
-  String _apFormHtml(const String& thongBao = "") const;
+  String _apFormHtml(const String& thongBao = "", const String& prefillSsid = "") const;
+  static String _htmlEscape(const String& s);
 
   static OtaNhatAnh* _instance;
 };
