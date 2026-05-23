@@ -82,7 +82,8 @@ void OtaNhatAnh::_startWifi() {
     _trySaveWifiPrefs(ssid, pass);
   }
 
-  WiFi.mode(WIFI_STA);
+  // Neu AP rescue dang chay, GIU mode AP_STA de khong tat AP
+  WiFi.mode(_apActive ? WIFI_AP_STA : WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
@@ -114,8 +115,10 @@ void OtaNhatAnh::_startWifi() {
       return;
     }
 #endif
-    Serial.println("[OTA] Khong co wifi cred — tu mo AP rescue de cau hinh.");
-    batConfigPortal(600);    // 10 phut
+    if (!_apActive) {
+      Serial.println("[OTA] Khong co wifi cred — tu mo AP rescue de cau hinh.");
+      batConfigPortal(600);    // 10 phut
+    }
     _setState(OtaState::WIFI_CONNECTING);
     _lastWifiTry = millis();
     return;
@@ -350,7 +353,10 @@ void OtaNhatAnh::_tickWifi() {
   }
   // Đợi 30s mỗi lần connect, sau đó retry với backoff
   unsigned long since = millis() - _lastWifiTry;
-  unsigned long backoff = (_wifiRetryCount < 5) ? 30000UL : 60000UL;
+  unsigned long backoff;
+  if (_wifiRetryCount < 5) backoff = 30000UL;
+  else if (_wifiRetryCount < 10) backoff = 60000UL;
+  else backoff = 300000UL;   // 5 phut
   if (since > backoff) {
     _wifiRetryCount++;
     Serial.print("[OTA] WiFi retry #");
@@ -360,7 +366,8 @@ void OtaNhatAnh::_tickWifi() {
       Serial.println("[OTA] WiFi STA fail 3 lan → tu mo AP rescue");
       batConfigPortal(600);
     }
-    WiFi.disconnect();
+    // Khong WiFi.disconnect() neu AP dang chay — se phut mode AP_STA
+    if (!_apActive) WiFi.disconnect();
     _startWifi();
   }
 }
