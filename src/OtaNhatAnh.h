@@ -8,11 +8,15 @@
   #include <WiFiClientSecure.h>
   #include <HTTPUpdate.h>
   #include <Preferences.h>
+  #include <WebServer.h>
+  #include <DNSServer.h>
 #elif defined(ESP8266)
   #include <ESP8266WiFi.h>
   #include <WiFiClientSecureBearSSL.h>
   #include <ESP8266httpUpdate.h>
   #include <EEPROM.h>
+  #include <ESP8266WebServer.h>
+  #include <DNSServer.h>
 #endif
 
 #include <PubSubClient.h>
@@ -141,7 +145,15 @@ private:
 
 #if defined(ESP32)
   Preferences _prefs;
+  WebServer* _apWeb = nullptr;
+  DNSServer* _apDns = nullptr;
+#elif defined(ESP8266)
+  ESP8266WebServer* _apWeb = nullptr;
+  DNSServer* _apDns = nullptr;
 #endif
+  bool _apActive = false;
+  unsigned long _apStartMs = 0;
+  uint16_t _apTimeoutSec = 0;
 
   String _topic(const String& sub) const;
   void _setState(OtaState s);
@@ -159,5 +171,14 @@ private:
   void _publishRawLine(const char* msg);
   void _handleCommand(const String& topic, const String& payload);
   static void _onMqttRaw(char* topic, byte* payload, unsigned int len);
+
+  // Captive portal handlers
+  void _apTick();
+  void _apStop();
+  void _apHandleRoot();
+  void _apHandleSave();
+  void _apHandleScan();
+  String _apFormHtml(const String& thongBao = "") const;
+
   static OtaNhatAnh* _instance;
 };

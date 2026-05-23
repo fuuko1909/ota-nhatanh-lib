@@ -114,28 +114,169 @@ void OtaNhatAnh::_startWifi() {
       return;
     }
 #endif
-    Serial.println("[OTA] Khong co wifi cred — chay offline. Goi ota.setWifi(ssid, pass) hoac ota.batConfigPortal().");
+    Serial.println("[OTA] Khong co wifi cred — tu mo AP rescue de cau hinh.");
+    batConfigPortal(600);    // 10 phut
+    _setState(OtaState::WIFI_CONNECTING);
+    _lastWifiTry = millis();
+    return;
   }
   _setState(OtaState::WIFI_CONNECTING);
   _lastWifiTry = millis();
 }
 
 void OtaNhatAnh::batConfigPortal(uint16_t timeoutSec) {
-#if defined(ESP32)
-  // AP mode đơn giản: SSID = <deviceId>-recovery, không pass
-  // Chạy non-blocking trong loop bằng cách switch mode, user tự config qua web
+  if (_apActive) return;
   String apName = _cfg._deviceId + "-recovery";
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(apName.c_str());
-  Serial.print("[OTA] AP rescue: ");
+  delay(100);
+  IPAddress apIp = WiFi.softAPIP();
+  Serial.print("[OTA] AP rescue: SSID=");
   Serial.print(apName);
-  Serial.print(" IP=");
-  Serial.println(WiFi.softAPIP());
-  Serial.print("[OTA] Goi ota.setWifi(ssid, pass) tu code khac, hoac dung mDNS/web portal rieng. Timeout=");
-  Serial.print(timeoutSec);
-  Serial.println("s");
-  // Không tự cài web server — user implement riêng nếu cần
+  Serial.print("  IP=");
+  Serial.println(apIp);
+  Serial.print("[OTA] Mo trinh duyet vao http://");
+  Serial.print(apIp);
+  Serial.println(" de cau hinh wifi. Captive portal se tu redirect.");
+
+#if defined(ESP32)
+  _apWeb = new WebServer(80);
+  _apDns = new DNSServer();
+#elif defined(ESP8266)
+  _apWeb = new ESP8266WebServer(80);
+  _apDns = new DNSServer();
 #endif
+  _apDns->setErrorReplyCode(DNSReplyCode::NoError);
+  _apDns->start(53, "*", apIp);  // capture all → portal trigger
+
+  _apWeb->on("/", HTTP_GET, [this]() { _apHandleRoot(); });
+  _apWeb->on("/save", HTTP_POST, [this]() { _apHandleSave(); });
+  _apWeb->on("/scan", HTTP_GET, [this]() { _apHandleScan(); });
+  // Captive portal probes (Android/iOS/Windows tự gọi)
+  _apWeb->onNotFound([this]() { _apHandleRoot(); });
+  _apWeb->begin();
+
+  _apActive = true;
+  _apStartMs = millis();
+  _apTimeoutSec = timeoutSec;
+}
+
+void OtaNhatAnh::_apStop() {
+  if (!_apActive) return;
+  if (_apWeb) { _apWeb->stop(); delete _apWeb; _apWeb = nullptr; }
+  if (_apDns) { _apDns->stop(); delete _apDns; _apDns = nullptr; }
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  _apActive = false;
+  Serial.println("[OTA] AP rescue stopped");
+}
+
+void OtaNhatAnh::_apTick() {
+  if (!_apActive) return;
+  _apDns->processNextRequest();
+  _apWeb->handleClient();
+  // Auto-stop khi WiFi STA connect duoc
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("[OTA] AP rescue: STA da connect → stop AP");
+    _apStop();
+    return;
+  }
+  // Timeout
+  if (_apTimeoutSec > 0 && (millis() - _apStartMs) / 1000UL > _apTimeoutSec) {
+    Serial.println("[OTA] AP rescue: timeout");
+    _apStop();
+  }
+}
+
+String OtaNhatAnh::_apFormHtml(const String& thongBao) const {
+  String h;
+  h.reserve(2048);
+  h += F("<!DOCTYPE html><html><head><meta charset='utf-8'>");
+  h += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+  h += F("<title>OTA NhatAnh — Cau hinh WiFi</title>");
+  h += F("<style>");
+  h += F("body{font-family:-apple-system,sans-serif;background:#0a1020;color:#e6edf7;padding:20px;max-width:480px;margin:auto}");
+  h += F("h1{color:#2dd4bf;font-size:1.4em;margin-bottom:6px}");
+  h += F(".sub{color:#94a3b8;font-size:0.9em;margin-bottom:18px}");
+  h += F("label{display:block;margin:14px 0 6px;font-size:0.85em;color:#94a3b8;text-transform:uppercase}");
+  h += F("input,select{width:100%;padding:10px;background:#0f1730;border:1px solid #1f2a4a;color:#e6edf7;border-radius:6px;font-size:1em;box-sizing:border-box}");
+  h += F("button{margin-top:18px;width:100%;padding:12px;background:#2dd4bf;color:#0a1020;border:0;border-radius:6px;font-size:1em;font-weight:600;cursor:pointer}");
+  h += F("button.scan{background:#1f2a4a;color:#2dd4bf;margin-top:6px}");
+  h += F(".msg{padding:10px;background:#2dd4bf22;border:1px solid #2dd4bf;border-radius:6px;margin-bottom:14px;color:#2dd4bf}");
+  h += F(".dev{margin-top:24px;font-size:0.75em;color:#64748b;text-align:center}");
+  h += F("</style></head><body>");
+  h += F("<h1>OTA NhatAnh</h1>");
+  h += F("<p class='sub'>Cau hinh WiFi cho thiet bi <b>");
+  h += _cfg._deviceId;
+  h += F("</b></p>");
+  if (thongBao.length() > 0) {
+    h += F("<div class='msg'>");
+    h += thongBao;
+    h += F("</div>");
+  }
+  h += F("<form method='POST' action='/save'>");
+  h += F("<label>SSID</label>");
+  h += F("<input name='ssid' required maxlength='32' autofocus>");
+  h += F("<label>Mat khau</label>");
+  h += F("<input name='pass' type='password' maxlength='64'>");
+  h += F("<button type='submit'>Luu &amp; Ket noi</button>");
+  h += F("</form>");
+  h += F("<button class='scan' onclick=\"location='/scan'\">Quet lai mang xung quanh</button>");
+  h += F("<p class='dev'>OtaNhatAnh lib v0.7.2</p>");
+  h += F("</body></html>");
+  return h;
+}
+
+void OtaNhatAnh::_apHandleRoot() {
+  _apWeb->send(200, "text/html", _apFormHtml());
+}
+
+void OtaNhatAnh::_apHandleScan() {
+  int n = WiFi.scanNetworks();
+  String html;
+  html.reserve(2048);
+  html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Scan</title>");
+  html += F("<style>body{font-family:sans-serif;background:#0a1020;color:#e6edf7;padding:20px;max-width:480px;margin:auto}");
+  html += F("a{display:block;padding:10px;background:#0f1730;color:#2dd4bf;text-decoration:none;border-radius:6px;margin:6px 0}");
+  html += F("a:hover{background:#1f2a4a}small{color:#94a3b8}</style></head><body>");
+  html += F("<h2>Tim thay ");
+  html += n;
+  html += F(" mang</h2>");
+  for (int i = 0; i < n; i++) {
+    html += F("<a href='/?ssid=");
+    html += WiFi.SSID(i);
+    html += F("'>");
+    html += WiFi.SSID(i);
+    html += F(" <small>(");
+    html += WiFi.RSSI(i);
+    html += F(" dBm)</small></a>");
+  }
+  html += F("<p><a href='/'>← Quay lai</a></p></body></html>");
+  _apWeb->send(200, "text/html", html);
+}
+
+void OtaNhatAnh::_apHandleSave() {
+  String ssid = _apWeb->arg("ssid");
+  String pass = _apWeb->arg("pass");
+  if (ssid.length() == 0) {
+    _apWeb->send(400, "text/html", _apFormHtml("SSID khong duoc rong"));
+    return;
+  }
+  Serial.print("[OTA] AP rescue: nhan SSID=");
+  Serial.println(ssid);
+  _trySaveWifiPrefs(ssid, pass);
+
+  String okHtml = F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<meta http-equiv='refresh' content='5'><title>Da luu</title>"
+    "<style>body{font-family:sans-serif;background:#0a1020;color:#e6edf7;text-align:center;padding:40px}"
+    "h1{color:#2dd4bf}</style></head><body>"
+    "<h1>Da luu</h1><p>Thiet bi se thu ket noi WiFi. Neu thanh cong, AP nay se tat.</p></body></html>");
+  _apWeb->send(200, "text/html", okHtml);
+  delay(500);
+
+  // Thuc hien connect — WiFi.mode AP_STA -> begin STA
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  // _apTick() se tu phat hien WL_CONNECTED → stop AP
 }
 
 // ─────────── MQTT non-blocking ───────────
@@ -197,6 +338,7 @@ int OtaNhatAnh::rssi() const { return wifiOnline() ? WiFi.RSSI() : 0; }
 String OtaNhatAnh::localIp() const { return wifiOnline() ? WiFi.localIP().toString() : String(""); }
 
 void OtaNhatAnh::_tickWifi() {
+  if (_apActive) _apTick();
   if (_cfg._wifiMode == OtaWifiMode::OFF) {
     if (WiFi.status() == WL_CONNECTED) _setState(OtaState::WIFI_OK);
     return;
@@ -213,12 +355,21 @@ void OtaNhatAnh::_tickWifi() {
     _wifiRetryCount++;
     Serial.print("[OTA] WiFi retry #");
     Serial.println(_wifiRetryCount);
+    // STA_ONLY khong tu mo AP. AUTO -> sau 3 fail tu mo AP rescue
+    if (_cfg._wifiMode == OtaWifiMode::AUTO && _wifiRetryCount >= 3 && !_apActive) {
+      Serial.println("[OTA] WiFi STA fail 3 lan → tu mo AP rescue");
+      batConfigPortal(600);
+    }
     WiFi.disconnect();
     _startWifi();
   }
 }
 
+// AP tick cung phai chay khi state ONLINE/MQTT/... neu user goi batConfigPortal tay
+// (kep them vao tickOnline va tickMqtt)
+
 void OtaNhatAnh::_tickMqtt() {
+  if (_apActive) _apTick();
   if (WiFi.status() != WL_CONNECTED) {
     _setState(OtaState::WIFI_CONNECTING);
     return;
@@ -238,6 +389,7 @@ void OtaNhatAnh::_tickMqtt() {
 }
 
 void OtaNhatAnh::_tickOnline() {
+  if (_apActive) _apTick();
   if (WiFi.status() != WL_CONNECTED) {
     _setState(OtaState::WIFI_CONNECTING);
     return;
