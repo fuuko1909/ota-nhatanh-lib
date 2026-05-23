@@ -75,7 +75,7 @@ void OtaNhatAnh::_startWifi() {
   String ssid = _cfg._wifiSsid;
   String pass = _cfg._wifiPass;
   if (ssid.length() == 0) {
-    // Thử load từ Preferences
+    // Thử load từ Preferences (lib lưu)
     _loadWifiPrefs(ssid, pass);
   } else {
     // User config từ code → lưu vào prefs cho lần boot sau
@@ -91,7 +91,30 @@ void OtaNhatAnh::_startWifi() {
     Serial.println(ssid);
     WiFi.begin(ssid.c_str(), pass.c_str());
   } else {
-    Serial.println("[OTA] Khong co wifi cred — chay offline. Goi ota.setWifi() hoac ota.batConfigPortal().");
+    // Fallback: thu WiFi.begin() khong tham so — Arduino core ESP32/ESP8266
+    // luu cred trong NVS namespace 'nvs.net80211' (khi WiFi.persistent=true tu lan truoc)
+    // Cred nay co the do WiFiManager/Arduino core ghi tu lib version cu.
+#if defined(ESP32)
+    String coreSsid = WiFi.SSID();
+    if (coreSsid.length() > 0) {
+      Serial.print("[OTA] WiFi.begin() — dung cred Arduino core lan truoc, ssid=");
+      Serial.println(coreSsid);
+      WiFi.begin();
+      _setState(OtaState::WIFI_CONNECTING);
+      _lastWifiTry = millis();
+      return;
+    }
+#elif defined(ESP8266)
+    if (WiFi.SSID().length() > 0) {
+      Serial.print("[OTA] WiFi.begin() — dung cred Arduino core lan truoc, ssid=");
+      Serial.println(WiFi.SSID());
+      WiFi.begin();
+      _setState(OtaState::WIFI_CONNECTING);
+      _lastWifiTry = millis();
+      return;
+    }
+#endif
+    Serial.println("[OTA] Khong co wifi cred — chay offline. Goi ota.setWifi(ssid, pass) hoac ota.batConfigPortal().");
   }
   _setState(OtaState::WIFI_CONNECTING);
   _lastWifiTry = millis();
