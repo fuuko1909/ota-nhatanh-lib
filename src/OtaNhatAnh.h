@@ -7,10 +7,12 @@
   #include <WiFi.h>
   #include <WiFiClientSecure.h>
   #include <HTTPUpdate.h>
+  #include <Preferences.h>
 #elif defined(ESP8266)
   #include <ESP8266WiFi.h>
   #include <WiFiClientSecureBearSSL.h>
   #include <ESP8266httpUpdate.h>
+  #include <EEPROM.h>
 #endif
 
 #include <PubSubClient.h>
@@ -22,6 +24,25 @@
 
 typedef std::function<void(String, String)> OtaMqttCallback;
 
+enum class OtaWifiMode {
+  AUTO,        // STA tự retry, có hàm batConfigPortal() cho user trigger AP rescue
+  STA_ONLY,    // chỉ STA, không AP rescue
+  OFF,         // lib không quản WiFi, user tự kết nối
+};
+
+enum class OtaState {
+  BOOT,
+  WIFI_CONNECTING,
+  WIFI_FAIL,
+  WIFI_OK,
+  MQTT_CONNECTING,
+  MQTT_FAIL,
+  ONLINE,
+  OTA_RUNNING,
+};
+
+typedef std::function<void(OtaState, OtaState)> OtaStateCallback;
+
 class OtaNhatAnhConfig {
   friend class OtaNhatAnh;
 public:
@@ -30,8 +51,11 @@ public:
   OtaNhatAnhConfig& mqttCredentials(const String& user, const String& password);
   OtaNhatAnhConfig& otaManifest(const String& url);
   OtaNhatAnhConfig& checkOtaEveryHours(uint8_t hours);
-  OtaNhatAnhConfig& insecureTls(bool insecure = true);  // bỏ verify cert (TEST)
+  OtaNhatAnhConfig& insecureTls(bool insecure = true);
   OtaNhatAnhConfig& heartbeatSeconds(uint16_t s);
+  OtaNhatAnhConfig& wifiCredentials(const String& ssid, const String& pass);
+  OtaNhatAnhConfig& wifiMode(OtaWifiMode mode);
+  OtaNhatAnhConfig& otaAutoCheck(bool enable);
 
 private:
   String _deviceId;
@@ -43,6 +67,10 @@ private:
   uint8_t _otaIntervalHours = 6;
   bool _insecure = false;
   uint16_t _heartbeatSec = 60;
+  String _wifiSsid;
+  String _wifiPass;
+  OtaWifiMode _wifiMode = OtaWifiMode::AUTO;
+  bool _otaAutoCheck = false;     // default OFF, chỉ chạy on-demand
 };
 
 class OtaNhatAnh {
@@ -51,10 +79,14 @@ public:
 
   OtaNhatAnhConfig& config() { return _cfg; }
   void onMqttMessage(OtaMqttCallback cb) { _onMsg = cb; }
+  void onStateChange(OtaStateCallback cb) { _onState = cb; }
 
+  // Non-blocking begin: chỉ init state, return < 100ms
   void begin();
+  // Non-blocking loop: return < 1ms khi không có việc
   void loop();
 
+  // Publish (return false ngay nếu offline, không block)
   bool publish(const String& subTopic, const String& payload, bool retain = false);
   bool publishSensor(const String& tenSensor, float giaTri);
   bool publishSensor(const String& tenSensor, const String& giaTri);
@@ -70,33 +102,62 @@ public:
   void rawPrintln(const char *s);
   void rawPrintf(const char *fmt, ...);
 
-  bool isConnected() const;
-  void checkOtaNow();
+  // State queries
+  OtaState state() const { return _state; }
+  bool wifiOnline() const;
+  bool mqttOnline() const;
+  bool isConnected() const { return mqttOnline(); }  // backward compat
+  int rssi() const;
+  String localIp() const;
+
+  // Hành động
+  void setWifi(const String& ssid, const String& pass, bool luuPreferences = true);
+  void batConfigPortal(uint16_t timeoutSec = 300);
+  void checkOtaNow();  // user trigger thủ công
 
 private:
   OtaNhatAnhConfig _cfg;
   WiFiClientSecure _tls;
   PubSubClient _mqtt;
   OtaMqttCallback _onMsg;
-  unsigned long _lastReconnect = 0;
+  OtaStateCallback _onState;
+
+  OtaState _state = OtaState::BOOT;
+  unsigned long _stateEnterMs = 0;
+  unsigned long _lastWifiTry = 0;
+  unsigned long _lastMqttTry = 0;
   unsigned long _lastHeartbeat = 0;
   unsigned long _lastOtaCheck = 0;
+  uint8_t _wifiRetryCount = 0;
+
+  // Throttle log
   unsigned long _logTokenLast = 0;
-  uint16_t _logTokens = 20;        // 20 msg/s burst
-  void _publishLog(char level, const char* msg);
-  void _publishRawLine(const char* msg);
-  void _handleCommand(const String& topic, const String& payload);
+  uint16_t _logTokens = 20;
   unsigned long _rawTokenLast = 0;
   uint16_t _rawTokens = 100;
   char _rawBuf[256];
   int _rawIdx = 0;
+  unsigned long _lastOfflineWarn = 0;
+
+#if defined(ESP32)
+  Preferences _prefs;
+#endif
 
   String _topic(const String& sub) const;
-  void _setupWifi();
-  void _setupMqtt();
-  bool _connectMqtt();
+  void _setState(OtaState s);
+  void _tickBoot();
+  void _tickWifi();
+  void _tickMqtt();
+  void _tickOnline();
+  void _startWifi();
+  void _trySaveWifiPrefs(const String& ssid, const String& pass);
+  bool _loadWifiPrefs(String& ssid, String& pass);
+  bool _connectMqttNonBlocking();
   void _sendBirth();
   void _sendHeartbeat();
+  void _publishLog(char level, const char* msg);
+  void _publishRawLine(const char* msg);
+  void _handleCommand(const String& topic, const String& payload);
   static void _onMqttRaw(char* topic, byte* payload, unsigned int len);
   static OtaNhatAnh* _instance;
 };
